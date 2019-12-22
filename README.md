@@ -7,6 +7,13 @@
 [![Language Grade: JavaScript](https://img.shields.io/lgtm/grade/javascript/g/K3D-tools/K3D-jupyter.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/K3D-tools/K3D-jupyter/context:javascript)
 [![Language Grade: Python](https://img.shields.io/lgtm/grade/python/g/K3D-tools/K3D-jupyter.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/K3D-tools/K3D-jupyter/context:python)
 
+[![Coverage Status](http://img.shields.io/coveralls/LaGuer/K3D-jupyter.svg?style=flat-square)](https://coveralls.io/r/LaGuer/K3D-jupyter?branch=master)
+[![Build status](https://ci.appveyor.com/api/projects/status/8w554f36u0aj8vu5/branch/master?svg=true)](https://ci.appveyor.com/project/LaGuer/K3D-jupyter/branch/master)
+[![codecov](https://codecov.io/gh/LaGuer/K3D-jupyter/branch/master/graph/badge.svg)](https://codecov.io/gh/LaGuer/K3D-jupyter)
+[![Travis](https://travis-ci.org/LaGuer/K3D-jupyter.svg?branch=master)](https://travis-ci.org/LaGuer/K3D-jupyter)
+[![MyBinder](http://mybinder.org/badge.svg)](https://mybinder.org/v2/gh/laguer/K3D-jupyter/master)
+
+
 Jupyter notebook extension for 3D visualization.
 
 ![points_cloud](imgs/points_cloud.gif)
