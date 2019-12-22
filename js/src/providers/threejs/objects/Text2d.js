@@ -1,6 +1,8 @@
 'use strict';
 
-var katex = require('katex');
+var THREE = require('three'),
+    katex = require('katex'),
+    areAllChangesResolve = require('./../helpers/Fn').areAllChangesResolve;
 
 /**
  * Loader strategy to handle LaTex object
@@ -71,14 +73,38 @@ module.exports = {
         }
 
         listenersId = K3D.on(K3D.events.RENDERED, render);
+        object.domElement = domElement;
 
         object.onRemove = function () {
             overlayDOMNode.removeChild(domElement);
+            object.domElement = null;
             K3D.off(K3D.events.RENDERED, listenersId);
         };
 
         return Promise.resolve(object);
+    },
+
+    update: function (config, changes, obj) {
+        if (typeof(changes.text) !== 'undefined' && !changes.text.timeSeries) {
+            obj.domElement.innerHTML = katex.renderToString(changes.text, {displayMode: true});
+
+            changes.text = null;
+        }
+
+        if (typeof(changes.position) !== 'undefined' && !changes.position.timeSeries) {
+            obj.position.set(changes.position[0], changes.position[1], changes.position[2]);
+            obj.updateMatrixWorld();
+
+            changes.position = null;
+        }
+
+        if (areAllChangesResolve(changes)) {
+            return Promise.resolve({json: config, obj: obj});
+        } else {
+            return false;
+        }
     }
+
 };
 
 function colorToHex(color) {

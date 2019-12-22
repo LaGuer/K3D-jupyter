@@ -1,18 +1,65 @@
 'use strict';
+//jshint maxstatements:false
 
 var widgets = require('@jupyter-widgets/base'),
     K3D = require('./core/Core'),
+    TFEdit = require('./transferFunctionEditor'),
     serialize = require('./core/lib/helpers/serialize'),
     ThreeJsProvider = require('./providers/threejs/provider'),
     PlotModel,
     PlotView,
+    ChunkModel,
     ObjectModel,
     ObjectView,
-    semverRange = require('./version').EXTENSION_SPEC_VERSION,
+    semverRange = require('./version').version,
     objectsList = {},
+    chunkList = {},
     plotsList = [];
 
 require('es6-promise');
+
+function runOnEveryPlot(id, cb) {
+    plotsList.forEach(function (plot) {
+        if (plot.model.get('object_ids').indexOf(id) !== -1) {
+            cb(plot, plot.K3DInstance.getObjectById(id));
+        }
+    });
+}
+
+ChunkModel = widgets.WidgetModel.extend({
+    defaults: _.extend(_.result({}, 'widgets.WidgetModel.prototype.defaults'), {
+        _model_name: 'ChunkModel',
+        _model_module: 'k3d',
+        _model_module_version: semverRange
+    }),
+
+    initialize: function () {
+        var chunk = arguments[0];
+
+        widgets.WidgetModel.prototype.initialize.apply(this, arguments);
+
+        this.on('change', this._change, this);
+
+        chunkList[chunk.id] = this;
+    },
+
+    _change: function () {
+        var chunk = this.attributes;
+
+        Object.keys(objectsList).forEach(function (id) {
+            if (objectsList[id].attributes.type === 'VoxelsGroup') {
+                runOnEveryPlot(objectsList[id].attributes.id, function (plot, objInstance) {
+                    objInstance.updateChunk(chunk);
+                });
+            }
+        });
+    }
+}, {
+    serializers: _.extend({
+        voxels: serialize,
+        coord: serialize
+    }, widgets.WidgetModel.serializers)
+});
 
 ObjectModel = widgets.WidgetModel.extend({
     defaults: _.extend(_.result({}, 'widgets.WidgetModel.prototype.defaults'), {
@@ -23,14 +70,6 @@ ObjectModel = widgets.WidgetModel.extend({
         _model_module_version: semverRange,
         _view_module_version: semverRange
     }),
-
-    runOnEveryPlot: function (cb) {
-        plotsList.forEach(function (plot) {
-            if (plot.model.get('object_ids').indexOf(this.get('id')) !== -1) {
-                cb(plot, plot.K3DInstance.getObjectById(this.get('id')));
-            }
-        }, this);
-    },
 
     initialize: function () {
         var obj = arguments[0];
@@ -53,7 +92,7 @@ ObjectModel = widgets.WidgetModel.extend({
             }
 
             if (msg.msg_type === 'shadow_map_update' && this.get('type') === 'Volume') {
-                this.runOnEveryPlot(function (plot, objInstance) {
+                runOnEveryPlot(this.get('id'), function (plot, objInstance) {
                     objInstance.refreshLightMap(msg.direction);
                     plot.K3DInstance.render();
                 });
@@ -63,9 +102,9 @@ ObjectModel = widgets.WidgetModel.extend({
         objectsList[obj.id] = this;
     },
 
-    _change: function () {
+    _change: function (c) {
         plotsList.forEach(function (plot) {
-            plot.refreshObject(this);
+            plot.refreshObject(this, c.changed);
         }, this);
     }
 }, {
@@ -73,19 +112,42 @@ ObjectModel = widgets.WidgetModel.extend({
         model_matrix: serialize,
         positions: serialize,
         scalar_field: serialize,
+        alpha_coef: serialize,
+        shadow: serialize,
+        shadow_res: serialize,
+        shadow_delay: serialize,
+        ray_samples_count: serialize,
+        focal_plane: serialize,
+        focal_length: serialize,
+        gradient_step: serialize,
         color_map: serialize,
+        samples: serialize,
+        color_range: serialize,
         attribute: serialize,
         vertices: serialize,
         indices: serialize,
         colors: serialize,
         origins: serialize,
         vectors: serialize,
+        opacity: serialize,
+        point_size: serialize,
+        width: serialize,
+        shader: serialize,
+        wireframe: serialize,
+        radial_segments: serialize,
+        color: serialize,
+        flat_shading: serialize,
         heights: serialize,
+        mesh_detail: serialize,
         voxels: serialize,
         voxels_group: serialize,
         sparse_voxels: serialize,
         space_size: serialize,
-        volume: serialize
+        volume: serialize,
+        opacity_function: serialize,
+        text: serialize,
+        size: serialize,
+        position: serialize
     }, widgets.WidgetModel.serializers)
 });
 
@@ -150,6 +212,10 @@ PlotView = widgets.DOMWidgetView.extend({
                         model.save('screenshot', data);
                     });
             }
+
+            if (obj.msg_type === 'reset_camera') {
+                this.K3DInstance.resetCamera();
+            }
         }, this);
         this.model.on('change:camera_auto_fit', this._setCameraAutoFit, this);
         this.model.on('change:lighting', this._setDirectionalLightingIntensity, this);
@@ -164,15 +230,37 @@ PlotView = widgets.DOMWidgetView.extend({
         this.model.on('change:camera', this._setCamera, this);
         this.model.on('change:clipping_planes', this._setClippingPlanes, this);
         this.model.on('change:object_ids', this._onObjectsListChange, this);
+        this.model.on('change:menu_visibility', this._setMenuVisibility, this);
+        this.model.on('change:colorbar_object_id', this._setColorMapLegend, this);
+        this.model.on('change:rendering_steps', this._setRenderingSteps, this);
+        this.model.on('change:axes', this._setAxes, this);
+        this.model.on('change:camera_no_rotate', this._setCameraLock, this);
+        this.model.on('change:camera_no_zoom', this._setCameraLock, this);
+        this.model.on('change:camera_no_pan', this._setCameraLock, this);
+        this.model.on('change:camera_fov', this._setCameraFOV, this);
+        this.model.on('change:axes_helper', this._setAxesHelper, this);
+        this.model.on('change:name', this._setName, this);
 
         try {
             this.K3DInstance = new K3D(ThreeJsProvider, this.container, {
                 antialias: this.model.get('antialias'),
-                specVersion: this.model.get('_view_module_version'),
+                lighting: this.model.get('lighting'),
                 backendVersion: this.model.get('_backend_version'),
                 screenshotScale: this.model.get('screenshot_scale'),
-                grid: this.model.get('grid')
+                menuVisibility: this.model.get('menu_visibility'),
+                cameraNoRotate: this.model.get('camera_no_rotate'),
+                cameraNoZoom: this.model.get('camera_no_zoom'),
+                cameraNoPan: this.model.get('camera_no_pan'),
+                name: this.model.get('name'),
+                axes: this.model.get('axes'),
+                axesHelper: this.model.get('axes_helper'),
+                grid: this.model.get('grid'),
+                gridVisible: this.model.get('grid_visible')
             });
+
+            if (this.model.get('camera_auto_fit') === false) {
+                this.K3DInstance.setCamera(this.model.get('camera'));
+            }
         } catch (e) {
             console.log(e);
             return;
@@ -182,9 +270,11 @@ PlotView = widgets.DOMWidgetView.extend({
         this.objectsChangesQueueRun = false;
 
         this.K3DInstance.setClearColor(this.model.get('background_color'));
+        this.K3DInstance.setChunkList(chunkList);
 
         this._setCameraAutoFit();
         this._setGridAutoFit();
+        this._setMenuVisibility();
         this._setVoxelPaintColor();
 
         this.model.get('object_ids').forEach(function (id) {
@@ -202,7 +292,7 @@ PlotView = widgets.DOMWidgetView.extend({
 
         this.GUIObjectChanges = this.K3DInstance.on(this.K3DInstance.events.OBJECT_CHANGE, function (change) {
             if (self.model._comm_live) {
-                objectsList[change.id].save(change.key, change.value);
+                objectsList[change.id].save(change.key, change.value, {patch: true});
             }
         });
 
@@ -258,8 +348,44 @@ PlotView = widgets.DOMWidgetView.extend({
         this.K3DInstance.setGrid(this.model.get('grid'));
     },
 
+    _setMenuVisibility: function () {
+        this.K3DInstance.setMenuVisibility(this.model.get('menu_visibility'));
+    },
+
+    _setColorMapLegend: function () {
+        this.K3DInstance.setColorMapLegend(this.model.get('colorbar_object_id'));
+    },
+
     _setCamera: function () {
         this.K3DInstance.setCamera(this.model.get('camera'));
+    },
+
+    _setRenderingSteps: function () {
+        this.K3DInstance.setRenderingSteps(this.model.get('rendering_steps'));
+    },
+
+    _setAxes: function () {
+        this.K3DInstance.setAxes(this.model.get('axes'));
+    },
+
+    _setName: function () {
+        this.K3DInstance.setName(this.model.get('name'));
+    },
+
+    _setAxesHelper: function () {
+        this.K3DInstance.setAxesHelper(this.model.get('axes_helper'));
+    },
+
+    _setCameraLock: function () {
+        this.K3DInstance.setCameraLock(
+            this.model.get('camera_no_rotate'),
+            this.model.get('camera_no_zoom'),
+            this.model.get('camera_no_pan')
+        );
+    },
+
+    _setCameraFOV: function () {
+        this.K3DInstance.setCameraFOV(this.model.get('camera_fov'));
     },
 
     _setClippingPlanes: function () {
@@ -284,7 +410,7 @@ PlotView = widgets.DOMWidgetView.extend({
         }
 
         if (obj.operation === 'update') {
-            self.K3DInstance.reload(objectsList[obj.id].attributes);
+            self.K3DInstance.reload(objectsList[obj.id].attributes, obj.changed);
         }
 
         if (self.objectsChangesQueue.length > 0) {
@@ -309,9 +435,9 @@ PlotView = widgets.DOMWidgetView.extend({
         this.startRefreshing();
     },
 
-    refreshObject: function (obj) {
+    refreshObject: function (obj, changed) {
         if (this.model.get('object_ids').indexOf(obj.get('id')) !== -1) {
-            this.objectsChangesQueue.push({id: obj.get('id'), operation: 'update'});
+            this.objectsChangesQueue.push({id: obj.get('id'), changed: changed, operation: 'update'});
             this.startRefreshing();
         }
     },
@@ -364,10 +490,14 @@ PlotView = widgets.DOMWidgetView.extend({
 });
 
 module.exports = {
+    ChunkModel: ChunkModel,
     PlotModel: PlotModel,
     PlotView: PlotView,
     ObjectModel: ObjectModel,
     ObjectView: ObjectView,
     K3D: K3D,
+    TransferFunctionEditor: TFEdit.transferFunctionEditor,
+    TransferFunctionModel: TFEdit.transferFunctionModel,
+    TransferFunctionView: TFEdit.transferFunctionView,
     ThreeJsProvider: ThreeJsProvider
 };

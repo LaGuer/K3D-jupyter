@@ -1,5 +1,8 @@
 'use strict';
 
+var THREE = require('three'),
+    recalculateFrustum = require('./../helpers/Fn').recalculateFrustum;
+
 /**
  * Camera initializer for Three.js library
  * @this K3D.Core~world
@@ -7,20 +10,38 @@
  * @memberof K3D.Providers.ThreeJS.Initializers
  */
 module.exports = function (K3D) {
-    var fov = 60, currentFar = 1000;
+    var currentFar = 1000;
 
-    this.camera = new THREE.PerspectiveCamera(fov, this.width / this.height, 0.1, currentFar);
+    this.camera = new THREE.PerspectiveCamera(K3D.parameters.camera_fov, this.width / this.height, 0.1, currentFar);
     this.camera.position.set(2, -3, 0.2);
     this.camera.up.set(0, 0, 1);
+    this.camera.frustum = new THREE.Frustum();
 
-    this.setupCamera = function (array) {
-        this.controls.object.position.fromArray(array);
-        if (array.length === 9) {
-            this.controls.object.up.fromArray(array, 6);
+    this.axesHelper.camera = new THREE.PerspectiveCamera(K3D.parameters.camera_fov,
+        this.axesHelper.width / this.axesHelper.height, 0.1, 1000);
+    this.axesHelper.camera.position.set(2, 0.5, 0.5);
+    this.axesHelper.camera.lookAt(0.5, 0.5, 0.5);
+    this.axesHelper.camera.up.copy(this.camera.up);
+
+    this.setupCamera = function (array, fov) {
+        if (fov) {
+            this.camera.fov = this.axesHelper.camera.fov = fov;
+            this.camera.updateProjectionMatrix();
+            this.axesHelper.camera.updateProjectionMatrix();
         }
-        this.controls.target.fromArray(array, 3);
 
-        this.controls.update();
+        if (array) {
+            this.controls.object.position.fromArray(array);
+
+            if (array.length === 9) {
+                this.controls.object.up.fromArray(array, 6);
+            }
+
+            this.controls.target.fromArray(array, 3);
+            this.controls.update();
+        }
+
+        recalculateFrustum(this.camera);
     };
 
     this.setCameraToFitScene = function (force) {
@@ -87,7 +108,7 @@ module.exports = function (K3D) {
 
         sceneBoundingSphere = sceneBoundingBox.getBoundingSphere(new THREE.Sphere());
 
-        camDistance = sceneBoundingSphere.radius * 1.5 / Math.sin(THREE.Math.degToRad(fov / 2.0));
+        camDistance = sceneBoundingSphere.radius * 1.5 / Math.sin(THREE.Math.degToRad(K3D.parameters.camera_fov / 2.0));
 
         this.camera.position.subVectors(
             sceneBoundingSphere.center,

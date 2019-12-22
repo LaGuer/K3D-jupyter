@@ -5,16 +5,19 @@
 require('./deps');
 
 var k3d = require('./index'),
-    EXTENSION_SPEC_VERSION = require('./version').EXTENSION_SPEC_VERSION,
+    version = require('./version').version,
     base = require('@jupyter-widgets/base');
 
 module.exports = {
-    id: 'k3d',
+    id: 'jupyter.extensions.k3d',
     requires: [base.IJupyterWidgetRegistry],
     activate: function (app, widgets) {
+        require('style-loader?{attrs:{id: "k3d-katex"}}!css-loader!../node_modules/katex/dist/katex.min.css');
+        require('style-loader?{attrs:{id: "k3d-dat.gui"}}!css-loader!../node_modules/dat.gui/build/dat.gui.css');
+
         widgets.registerWidget({
             name: 'k3d',
-            version: EXTENSION_SPEC_VERSION,
+            version: version,
             exports: k3d
         });
     },

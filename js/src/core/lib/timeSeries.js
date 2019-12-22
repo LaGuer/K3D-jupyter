@@ -77,20 +77,17 @@ module.exports = {
             if (controller.property === 'time') {
                 controller.min(timeSeriesInfo.min).max(timeSeriesInfo.max)
                     .step(pow10ceil(timeSeriesInfo.max - timeSeriesInfo.min) / 10000.0);
+            }
 
-                if (timeSeriesInfo.min === timeSeriesInfo.max) {
-                    controller.__li.hidden = true;
-                } else {
-                    controller.__li.hidden = false;
-                }
-
+            if (['togglePlay', 'fps', 'time'].indexOf(controller.property) !== -1) {
+                controller.__li.hidden = timeSeriesInfo.min === timeSeriesInfo.max;
                 controller.updateDisplay();
             }
         });
     },
 
     interpolateTimeSeries: function (json, time) {
-        var interpolated_json = {};
+        var interpolated_json = {}, changes = {};
 
         Object.keys(json).forEach(function (property) {
             var keypoints,
@@ -131,12 +128,14 @@ module.exports = {
                         }
                     }
                 }
+
+                changes[property] = interpolated_json[property];
             } else {
                 interpolated_json[property] = json[property];
             }
         });
 
-        return interpolated_json;
+        return {json: interpolated_json, changes: changes};
     },
 
     getObjectsWithTimeSeriesAndMinMax: getObjectsWithTimeSeriesAndMinMax,
@@ -171,7 +170,7 @@ module.exports = {
                 changeParameters('time', value);
             });
 
-        gui.add(K3D.parameters, 'fps').min(0).max(50).name('fps')
+        gui.add(K3D.parameters, 'fps').min(0).max(120).name('fps')
             .onChange(function (value) {
                 changeParameters('fps', value);
 

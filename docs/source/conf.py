@@ -19,8 +19,9 @@
 
 # -- path -------------------------------------------------------
 
-import sys
 import os
+import sys
+import sphinx_rtd_theme
 from os.path import dirname
 
 here = os.path.dirname(__file__)
@@ -64,8 +65,8 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'K3D-jupyter'
-copyright = '2018, Marcin Kostur, Artur Trzęsiok, Filip Kaśkosz'
-author = 'Marcin Kostur, Artur Trzęsiok, Filip Kaśkosz'
+copyright = u'2019, Marcin Kostur, Artur Trzęsiok, Filip Kaśkosz'
+author = u'Marcin Kostur, Artur Trzęsiok, Filip Kaśkosz'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -76,7 +77,7 @@ repo = os.path.join(here, '..', '..')
 _version_py = os.path.join(repo, 'k3d', '_version.py')
 version_ns = {}
 with open(_version_py) as f:
-    exec(f.read(), version_ns)
+    exec (f.read(), version_ns)
 
 # The short X.Y version.
 version = '%i.%i' % version_ns['version_info'][:2]
@@ -107,13 +108,16 @@ todo_include_todos = True
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'sphinx_rtd_theme'
+html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-# html_theme_options = {}
+html_theme_options = {
+    'analytics_id': 'UA-141840477-1'
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -201,24 +205,32 @@ intersphinx_mapping = {'https://docs.python.org/': None}
 # docs.readthedocs.org
 on_rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
-if not on_rtd:  # only import and set the theme if we're building docs locally
-    import sphinx_rtd_theme
-
-    html_theme = 'sphinx_rtd_theme'
-    html_theme_path = [sphinx_rtd_theme.get_html_theme_path()]
 
 def add_scripts(app):
-    from shutil import copyfile
+    from shutil import copyfile, move
 
-    src = os.path.join(
-        here, '..', '..', 'js', 'dist', 'index.js')
-    fname = 'k3d.js'
-    dst = os.path.join(here, '_static', fname)
-    copyfile(src, dst)
-    app.add_javascript(fname)
+    app.add_javascript('require_config.js')
+
+    if not on_rtd:
+        src = os.path.join(here, '..', '..', 'js', 'dist', 'index.js')
+        dst = os.path.join(here, '_static', 'k3d.js')
+        copyfile(src, dst)
+
+        src = os.path.join(here, '..', '..', 'js', 'dist', 'standalone.js')
+        dst = os.path.join(here, '_static', 'standalone.js')
+        copyfile(src, dst)
+    else:
+        sys.path.append(os.path.abspath('./../../'))
+        from k3d.helpers import download
+
+        filename = download('https://unpkg.com/k3d/dist/index.js')
+        move(filename, os.path.join(here, '_static', 'k3d.js'))
+
+        filename = download('https://unpkg.com/k3d/dist/standalone.js')
+        move(filename, os.path.join(here, '_static', filename))
+
 
 def setup(app):
     app.setup_extension('jupyter_sphinx.embed_widgets')
     app.add_stylesheet('style.css')
-
     app.connect('builder-inited', add_scripts)

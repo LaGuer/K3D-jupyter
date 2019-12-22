@@ -1,9 +1,61 @@
 'use strict';
 
-var Text = require('./../objects/Text'),
-    MeshLine = require('./../helpers/THREE.MeshLine'),
+var THREE = require('three'),
+    Text = require('./../objects/Text'),
+    Vectors = require('./../objects/Vectors'),
+    MeshLine = require('./../helpers/THREE.MeshLine')(THREE),
     viewModes = require('./../../../core/lib/viewMode').viewModes,
-    pow10ceil = require('./../../../core/lib/helpers/math').pow10ceil;
+    pow10ceil = require('./../../../core/lib/helpers/math').pow10ceil,
+    rebuildSceneDataPromises = null;
+
+function generateAxesHelper(K3D, axesHelper) {
+    var promises = [],
+        colors = {
+            'x': 0xff0000,
+            'y': 0x0000ff,
+            'z': 0x00ff00
+        },
+        directions = {
+            'x': [1, 0, 0],
+            'y': [0, 1, 0],
+            'z': [0, 0, 1]
+        },
+        order = {
+            'x': 0,
+            'y': 1,
+            'z': 2
+        };
+
+    ['x', 'y', 'z'].forEach(function (axis) {
+        var label = new Text.create({
+            'position': new THREE.Vector3().fromArray(directions[axis]).multiplyScalar(1.1).toArray(),
+            'reference_point': 'cc',
+            'color': 0x444444,
+            'text': K3D.parameters.axes[order[axis]],
+            'size': 0.75
+        }, K3D, axesHelper);
+
+        promises.push(label.then(function (obj) {
+            axesHelper[axis] = obj;
+            axesHelper.scene.add(obj);
+        }));
+    });
+
+    var arrows = new Vectors.create({
+        'colors': {data: [colors.x, colors.x, colors.y, colors.y, colors.z, colors.z]},
+        'origins': {data: [0, 0, 0, 0, 0, 0, 0, 0, 0]},
+        'vectors': {data: [].concat(directions.x, directions.y, directions.z)},
+        'line_width': 0.05,
+        'head_size': 2.5
+    }, K3D);
+
+    promises.push(arrows.then(function (obj) {
+        axesHelper.arrows = obj;
+        axesHelper.scene.add(obj);
+    }));
+
+    return promises;
+}
 
 function ensureTwoTicksOnGrids(sceneBoundingBox, majorScale) {
     var size = sceneBoundingBox.getSize(new THREE.Vector3());
@@ -108,8 +160,16 @@ function generateEdgesPoints(box) {
     };
 }
 
-function rebuildSceneData(K3D, grids, force) {
-    /*jshint validthis:true */
+function rebuildSceneData(K3D, grids, axesHelper, force) {
+    /*jshint validthis:true, maxstatements:false */
+    var that = this;
+
+    if (rebuildSceneDataPromises) {
+        return Promise.all(rebuildSceneDataPromises).then(function () {
+            return rebuildSceneData.bind(that)(K3D, grids, axesHelper, force);
+        });
+    }
+
     var promises = [],
         fullSceneBoundingBox,
         fullSceneDiameter,
@@ -118,6 +178,7 @@ function rebuildSceneData(K3D, grids, force) {
         size,
         majorScale,
         minorScale,
+        camDistance,
         sceneBoundingBox = new THREE.Box3().setFromArray(K3D.parameters.grid),
         extendedSceneBoundingBox,
         unitVectors = {
@@ -144,6 +205,34 @@ function rebuildSceneData(K3D, grids, force) {
     });
 
     octree.update();
+
+    // axes Helper
+    ['x', 'y', 'z'].forEach(function (axis) {
+        if (axesHelper[axis]) {
+            axesHelper[axis].onRemove();
+            axesHelper.scene.remove(axesHelper[axis]);
+            axesHelper[axis] = null;
+        }
+    });
+
+    if (axesHelper.arrows) {
+        axesHelper.scene.remove(axesHelper.arrows);
+        axesHelper.arrows = null;
+    }
+
+    if (K3D.parameters.axesHelper) {
+        if (K3D.parameters.axesHelper > 1) {
+            axesHelper.width = axesHelper.height = K3D.parameters.axesHelper;
+        } else if (K3D.parameters.axesHelper > 0) {
+            axesHelper.width = axesHelper.height = 100;
+        }
+
+        if (K3D.parameters.axesHelper > 0) {
+            generateAxesHelper(K3D, axesHelper).forEach(function (p) {
+                promises.push(p);
+            });
+        }
+    }
 
     if (K3D.parameters.gridAutoFit || force) {
         // Grid generation
@@ -286,7 +375,7 @@ function rebuildSceneData(K3D, grids, force) {
                 'position': middle.toArray(),
                 'reference_point': 'cc',
                 'color': 0x444444,
-                'text': iterateAxis,
+                'text': K3D.parameters.axes[['x', 'y', 'z'].indexOf(iterateAxis)],
                 'size': 1.0
             }, K3D);
 
@@ -357,11 +446,18 @@ function rebuildSceneData(K3D, grids, force) {
 
     fullSceneDiameter = fullSceneBoundingBox.getSize(new THREE.Vector3()).length();
 
-    this.camera.far = fullSceneDiameter * 10;
+    camDistance = (fullSceneDiameter / 2.0) / Math.sin(THREE.Math.degToRad(K3D.parameters.camera_fov / 2.0));
+
+    this.camera.far = (camDistance + fullSceneDiameter / 2) * 5.0;
     this.camera.near = fullSceneDiameter * 0.0001;
     this.camera.updateProjectionMatrix();
 
-    return promises;
+    rebuildSceneDataPromises = promises;
+
+    return Promise.all(promises).then(function (v) {
+        rebuildSceneDataPromises = null;
+        return v;
+    });
 }
 
 function refreshGrid(K3D, grids) {
@@ -499,6 +595,7 @@ module.exports = {
         this.scene = new THREE.Scene();
         this.gridScene = new THREE.Scene();
 
+        this.axesHelper.scene = new THREE.Scene();
         this.K3DObjects = new THREE.Group();
 
         [this.keyLight, this.headLight, this.fillLight, this.backLight].forEach(function (light) {
@@ -511,11 +608,11 @@ module.exports = {
         this.scene.add(this.camera);
         this.scene.add(this.K3DObjects);
 
-        K3D.rebuildSceneData = rebuildSceneData.bind(this, K3D, grids);
+        K3D.rebuildSceneData = rebuildSceneData.bind(this, K3D, grids, this.axesHelper);
         K3D.getSceneBoundingBox = getSceneBoundingBox.bind(this);
         K3D.refreshGrid = refreshGrid.bind(this, K3D, grids);
 
-        Promise.all(K3D.rebuildSceneData()).then(function () {
+        K3D.rebuildSceneData().then(function () {
             K3D.refreshGrid();
             K3D.render();
         });
@@ -552,6 +649,18 @@ module.exports = {
                     K3D.render();
                 }
             }
+        });
+
+        K3D.on(K3D.events.RESIZED, function () {
+            // update outlines
+            Object.keys(grids.planes).forEach(function (axis) {
+                grids.planes[axis].forEach(function (plane) {
+                    var objResolution = plane.obj.material.uniforms.resolution;
+
+                    objResolution.value.x = K3D.getWorld().width;
+                    objResolution.value.y = K3D.getWorld().height;
+                }, this);
+            }, this);
         });
     }
 };

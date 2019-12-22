@@ -6,6 +6,7 @@ var fileLoader = require('./helpers/fileLoader');
 var template = require('raw-loader!./snapshot.txt');
 var requireJsSource = require('raw-loader!./../../../node_modules/requirejs/require.js');
 var pakoJsSource = require('raw-loader!./../../../node_modules/pako/dist/pako_inflate.min.js');
+var semverRange = require('./../../version').version;
 
 var sourceCode = window.k3dCompressed;
 var scripts = document.getElementsByTagName('script');
@@ -15,17 +16,24 @@ if (typeof (sourceCode) === 'undefined') {
     sourceCode = '';
 
     for (var i = 0; i < scripts.length; i++) {
-        if (scripts[i].getAttribute('src') && scripts[i].getAttribute('src').includes('k3d') &&
-            scripts[i].getAttribute('src').includes('index.js')) {
+        // working in jupyter notebooks
+        if (scripts[i].getAttribute('src') &&
+            scripts[i].getAttribute('src').includes('k3d') &&
+            scripts[i].getAttribute('src').includes('.js')) {
             path = scripts[i].getAttribute('src');
         }
     }
 
     if (typeof (path) !== 'undefined') {
-        fileLoader(path.replace('index.js', 'standalone.js'), function (data) {
-            sourceCode = btoa(pako.deflate(data, {to: 'string', level: 9}));
-        });
+        path = path.replace('k3d.js', 'standalone.js').replace('index.js', 'standalone.js');
+    } else {
+        // use npm repository
+        path = 'https://unpkg.com/k3d@' + semverRange + '/dist/standalone.js';
     }
+
+    fileLoader(path, function (data) {
+        sourceCode = btoa(pako.deflate(data, {to: 'string', level: 9}));
+    });
 }
 
 function getSnapshot(K3D) {
@@ -34,6 +42,8 @@ function getSnapshot(K3D) {
         timestamp = new Date().toUTCString();
 
     filecontent = filecontent.replace('[DATA]', btoa(data));
+    filecontent = filecontent.replace('[PARAMS]', JSON.stringify(K3D.parameters));
+    filecontent = filecontent.replace('[CAMERA]', JSON.stringify(K3D.getWorld().controls.getCameraArray()));
     filecontent = filecontent.replace('[TIMESTAMP]', timestamp);
     filecontent = filecontent.replace('[REQUIRE_JS]', requireJsSource);
     filecontent = filecontent.replace('[PAKO_JS]', pakoJsSource);
@@ -71,10 +81,15 @@ function handleDragOver(evt) {
 function snapshotGUI(gui, K3D) {
     var obj = {
             snapshot: function () {
-                var data = getSnapshot(K3D);
+                var data = getSnapshot(K3D),
+                    filename = 'K3D-snapshot-' + Date.now() + '.html';
+
+                if (K3D.parameters.name) {
+                    filename = K3D.parameters.name + '.html';
+                }
 
                 data = new Blob([data], {type: 'text/plain;charset=utf-8'});
-                FileSaver.saveAs(data, 'K3D-snapshot-' + Date.now() + '.html');
+                FileSaver.saveAs(data, filename);
             }
         },
         targetDomNode;

@@ -1,4 +1,4 @@
-from ._version import version_info
+from ._version import version_info, __version__
 
 from .colormaps import paraview_color_maps
 from .colormaps import basic_color_maps
@@ -23,7 +23,9 @@ from .k3d import (plot,
                   sparse_voxels,
                   volume,
                   vtk_poly_data,
-                  voxels_ipydw)
+                  voxel_chunk)
+
+from .transfer_function_editor import transfer_function_editor
 
 
 def _jupyter_nbextension_paths():

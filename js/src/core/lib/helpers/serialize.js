@@ -1,7 +1,7 @@
 'use strict';
 
 var pako = require('pako'),
-    ipyDataWidgets = require('jupyter-dataserializers').data_union_array_serialization,
+    Float16Array = require('./float16Array'),
     typesToArray = {
         int8: Int8Array,
         int16: Int16Array,
@@ -9,9 +9,14 @@ var pako = require('pako'),
         uint8: Uint8Array,
         uint16: Uint16Array,
         uint32: Uint32Array,
+        float16: Float16Array,
         float32: Float32Array,
         float64: Float64Array
     };
+
+function isNumeric(n) {
+    return !isNaN(parseFloat(n)) && isFinite(n);
+}
 
 function deserializeArray(obj) {
     var buffer;
@@ -38,7 +43,7 @@ function deserializeArray(obj) {
 function serializeArray(obj) {
     return {
         dtype: _.invert(typesToArray)[obj.data.constructor],
-        buffer: obj.data,
+        compressed_buffer: pako.deflate(obj.data.buffer, {level: 9}),
         shape: obj.shape
     };
 }
@@ -46,8 +51,8 @@ function serializeArray(obj) {
 function deserialize(obj, manager) {
     if (obj == null) {
         return null;
-    } else if (typeof (obj) === 'string') {
-        return ipyDataWidgets.deserialize(obj, manager);
+    } else if (typeof (obj) === 'string' || typeof(obj) === 'boolean') {
+        return obj;
     } else if (_.isNumber(obj)) { // plain number
         return obj;
     } else if (typeof (obj.shape) !== 'undefined') {
@@ -63,7 +68,7 @@ function deserialize(obj, manager) {
         // time series or dict
         var timeSeries = true;
         var deserializedObj = Object.keys(obj).reduce(function (p, k) {
-            if (!_.isNumber(k)) {
+            if (!isNumeric(k)) {
                 timeSeries = false;
             }
 
@@ -82,6 +87,8 @@ function deserialize(obj, manager) {
 
 function serialize(obj) {
     if (_.isNumber(obj)) {
+        return obj;
+    } else if (typeof (obj) === 'string' || typeof(obj) === 'boolean') {
         return obj;
     }
 

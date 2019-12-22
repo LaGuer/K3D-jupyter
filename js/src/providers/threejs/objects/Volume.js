@@ -2,8 +2,11 @@
 
 'use strict';
 
-var lut = require('./../../../core/lib/helpers/lut');
-var closestPowOfTwo = require('./../helpers/Fn').closestPowOfTwo;
+var THREE = require('three'),
+    colorMapHelper = require('./../../../core/lib/helpers/colorMap'),
+    closestPowOfTwo = require('./../helpers/Fn').closestPowOfTwo,
+    typedArrayToThree = require('./../helpers/Fn').typedArrayToThree,
+    areAllChangesResolve = require('./../helpers/Fn').areAllChangesResolve;
 
 /**
  * Loader strategy to handle Volume object
@@ -22,6 +25,10 @@ module.exports = {
         config.shadow_delay = config.shadow_delay || 500;
         config.shadow_res = closestPowOfTwo(config.shadow_res || 128);
 
+        config.ray_samples_count = config.ray_samples_count || 16;
+        config.focal_plane = config.focal_plane || 512.0;
+        config.focal_length = typeof (config.focal_length) !== 'undefined' ? config.focal_length : 0.0;
+
         var gl = K3D.getWorld().renderer.context,
             geometry = new THREE.BoxBufferGeometry(1, 1, 1),
             modelMatrix = new THREE.Matrix4(),
@@ -32,6 +39,7 @@ module.exports = {
             lightMapSize = config.shadow_res,
             lightMapRenderTargetSize,
             colorMap = (config.color_map && config.color_map.data) || null,
+            opacityFunction = (config.opacity_function && config.opacity_function.data) || null,
             colorRange = config.color_range,
             samples = config.samples,
             sceneRTT,
@@ -55,32 +63,33 @@ module.exports = {
         modelMatrix.set.apply(modelMatrix, config.model_matrix.data);
         modelMatrix.decompose(translation, rotation, scale);
 
-        texture = new THREE.Texture3D(
-            new Float32Array(config.volume.data),
+        texture = new THREE.DataTexture3D(
+            config.volume.data,
             config.volume.shape[2],
             config.volume.shape[1],
-            config.volume.shape[0],
-            THREE.RedFormat,
-            THREE.FloatType);
+            config.volume.shape[0]);
+
+        texture.format = THREE.RedFormat;
+        texture.type = typedArrayToThree(config.volume.data.constructor);
 
         texture.generateMipmaps = false;
         texture.minFilter = THREE.LinearFilter;
         texture.magFilter = THREE.LinearFilter;
-        texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.wrapS = texture.wrapT = THREE.MirroredRepeatWrapping;
         texture.needsUpdate = true;
 
         jitterTexture = new THREE.DataTexture(
-            new Uint8Array(_.range(32 * 32).map(function () {
+            new Uint8Array(_.range(64 * 64).map(function () {
                 return 255.0 * Math.random();
             })),
-            32, 32, THREE.RedFormat, THREE.UnsignedByteType);
+            64, 64, THREE.RedFormat, THREE.UnsignedByteType);
         jitterTexture.minFilter = THREE.LinearFilter;
         jitterTexture.magFilter = THREE.LinearFilter;
         jitterTexture.wrapS = jitterTexture.wrapT = THREE.RepeatWrapping;
         jitterTexture.generateMipmaps = false;
         jitterTexture.needsUpdate = true;
 
-        var canvas = lut(colorMap, 1024);
+        var canvas = colorMapHelper.createCanvasGradient(colorMap, 1024, opacityFunction);
         var colormap = new THREE.CanvasTexture(canvas, THREE.UVMapping, THREE.ClampToEdgeWrapping,
             THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter);
         colormap.needsUpdate = true;
@@ -108,9 +117,11 @@ module.exports = {
             gradient_step: {value: config.gradient_step},
             translation: {value: translation},
             rotation: {value: rotation},
+            shadowTexture: {type: 't', value: (textureRTT ? textureRTT.texture : null)},
+            focal_length: {value: config.focal_length},
+            focal_plane: {value: config.focal_plane},
             scale: {value: scale},
             volumeTexture: {type: 't', value: texture},
-            shadowTexture: {type: 't', value: (textureRTT ? textureRTT.texture : null)},
             colormap: {type: 't', value: colormap},
             jitterTexture: {type: 't', value: jitterTexture}
         };
@@ -122,12 +133,14 @@ module.exports = {
             ),
             defines: {
                 USE_SPECULAR: 1,
-                USE_SHADOW: (config.shadow !== 'off' ? 1 : 0)
+                USE_SHADOW: (config.shadow !== 'off' ? 1 : 0),
+                RAY_SAMPLES_COUNT: config.focal_length !== 0.0 ? config.ray_samples_count : 0
             },
             vertexShader: require('./shaders/Volume.vertex.glsl'),
             fragmentShader: require('./shaders/Volume.fragment.glsl'),
             side: THREE.BackSide,
             depthTest: false,
+            depthWrite: false,
             lights: true,
             clipping: true,
             transparent: true
@@ -200,8 +213,10 @@ module.exports = {
                         renderer.clippingPlanes.push(new THREE.Plane(new THREE.Vector3().fromArray(plane), plane[3]));
                     });
 
-                    renderer.clearTarget(textureRTT, true, true, true);
-                    renderer.render(sceneRTT, cameraRTT, textureRTT);
+                    renderer.setRenderTarget(textureRTT);
+                    renderer.clear(true, true, true);
+                    renderer.render(sceneRTT, cameraRTT);
+                    renderer.setRenderTarget(null);
                 }
             };
 
@@ -228,14 +243,21 @@ module.exports = {
                 });
             }
 
+            object.quadRTT = quadRTT;
             object.refreshLightMap();
         }
 
         object.onRemove = function () {
-            object.material.uniforms.volumeTexture.value.dispose();
+            if (quadRTT) {
+                quadRTT.material.uniforms.volumeTexture.value.dispose();
+                quadRTT.material.uniforms.volumeTexture.value = undefined;
+            }
+
             object.material.uniforms.volumeTexture.value = undefined;
             object.material.uniforms.colormap.value.dispose();
             object.material.uniforms.colormap.value = undefined;
+            jitterTexture.dispose();
+            jitterTexture = undefined;
 
             if (sceneRTT) {
                 sceneRTT = undefined;
@@ -256,5 +278,64 @@ module.exports = {
         };
 
         return Promise.resolve(object);
+    },
+
+    update: function (config, changes, obj) {
+        if (typeof(changes.color_range) !== 'undefined' && !changes.color_range.timeSeries) {
+            obj.material.uniforms.low.value = changes.color_range[0];
+            obj.material.uniforms.high.value = changes.color_range[1];
+
+            changes.color_range = null;
+        }
+
+        if (typeof(changes.focal_length) !== 'undefined' && !changes.focal_length.timeSeries) {
+            if ((obj.material.uniforms.focal_length.value === 0.0 && changes.focal_length !== 0.0) ||
+                changes.focal_length === 0.0) {
+
+                // shader needs to be recompile
+                return false;
+            }
+        }
+
+        if (typeof(changes.volume) !== 'undefined' && !changes.volume.timeSeries) {
+            obj.material.uniforms.volumeTexture.value.image.data = changes.volume.data;
+            obj.material.uniforms.volumeTexture.value.needsUpdate = true;
+
+            changes.volume = null;
+        }
+
+        if ((typeof(changes.color_map) !== 'undefined' && !changes.color_map.timeSeries) ||
+            (typeof(changes.opacity_function) !== 'undefined' && !changes.opacity_function.timeSeries)) {
+
+            var canvas = colorMapHelper.createCanvasGradient(
+                (changes.color_map && changes.color_map.data) || config.color_map.data,
+                1024,
+                (changes.opacity_function && changes.opacity_function.data) || config.opacity_function.data
+            );
+
+            obj.material.uniforms.colormap.value.image = canvas;
+            obj.material.uniforms.colormap.value.needsUpdate = true;
+
+            if (obj.quadRTT) {
+                obj.quadRTT.material.uniforms.colormap.value.image = canvas;
+                obj.quadRTT.material.uniforms.colormap.value.needsUpdate = true;
+            }
+
+            changes.color_map = null;
+            changes.opacity_function = null;
+        }
+
+        ['samples', 'alpha_coef', 'gradient_step', 'focal_plane', 'focal_length'].forEach(function (key) {
+            if (changes[key] && !changes[key].timeSeries) {
+                obj.material.uniforms[key].value = changes[key];
+                changes[key] = null;
+            }
+        });
+
+        if (areAllChangesResolve(changes)) {
+            return Promise.resolve({json: config, obj: obj});
+        } else {
+            return false;
+        }
     }
 };

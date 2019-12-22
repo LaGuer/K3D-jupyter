@@ -1,6 +1,8 @@
 'use strict';
 
-var handleColorMap = require('./../helpers/Fn').handleColorMap;
+var THREE = require('three'),
+    handleColorMap = require('./../helpers/Fn').handleColorMap,
+    areAllChangesResolve = require('./../helpers/Fn').areAllChangesResolve;
 
 /**
  * Loader strategy to handle Mesh object
@@ -15,6 +17,7 @@ module.exports = {
         config.color = typeof (config.color) !== 'undefined' ? config.color : 255;
         config.wireframe = typeof (config.wireframe) !== 'undefined' ? config.wireframe : false;
         config.flat_shading = typeof (config.flat_shading) !== 'undefined' ? config.flat_shading : true;
+        config.opacity = typeof (config.opacity) !== 'undefined' ? config.opacity : 1.0;
 
         var modelMatrix = new THREE.Matrix4(),
             MaterialConstructor = config.wireframe ? THREE.MeshBasicMaterial : THREE.MeshPhongMaterial,
@@ -25,7 +28,11 @@ module.exports = {
                 specular: 0x111111,
                 side: THREE.DoubleSide,
                 flatShading: config.flat_shading,
-                wireframe: config.wireframe
+                wireframe: config.wireframe,
+                opacity: config.opacity,
+                depthTest: config.opacity === 1.0,
+                depthWrite: config.opacity === 1.0,
+                transparent: config.opacity !== 1.0
             }),
             colorRange = config.color_range,
             colorMap = (config.color_map && config.color_map.data) || null,
@@ -57,11 +64,25 @@ module.exports = {
         object.updateMatrixWorld();
 
         return Promise.resolve(object);
-    }
+    },
 
-    // update: function (config, prevConfig, obj, K3D) {
-    //     console.log(config, prevConfig, obj, K3D);
-    //
-    //     return false;
-    // }
+    update: function (config, changes, obj) {
+        if (typeof(changes.attribute) !== 'undefined' && !changes.attribute.timeSeries) {
+            var data = obj.geometry.attributes.uv.array;
+
+            for (var i = 0; i < data.length; i++) {
+                data[i] = (changes.attribute.data[i] - config.color_range[0]) /
+                          (config.color_range[1] - config.color_range[0]);
+            }
+
+            obj.geometry.attributes.uv.needsUpdate = true;
+            changes.attribute = null;
+        }
+
+        if (areAllChangesResolve(changes)) {
+            return Promise.resolve({json: config, obj: obj});
+        } else {
+            return false;
+        }
+    }
 };

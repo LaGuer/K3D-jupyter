@@ -1,6 +1,7 @@
 'use strict';
-var Detector = require('./../../../../node_modules/three/examples/js/Detector'),
-    lut = require('./../../../core/lib/helpers/lut');
+var THREE = require('three'),
+    createCanvasGradient = require('./../../../core/lib/helpers/colorMap').createCanvasGradient,
+    Float16Array = require('./../../../core/lib/helpers/float16Array');
 
 function getSpaceDimensionsFromTargetElement(world) {
     return [world.targetDOMNode.offsetWidth, world.targetDOMNode.offsetHeight];
@@ -180,19 +181,10 @@ module.exports = {
         return heads;
     },
 
-    validateWebGL: function (targetDOMNode) {
-        if (!Detector.webgl) {
-            Detector.addGetWebGLMessage({parent: targetDOMNode});
-            return false;
-        }
-
-        return true;
-    },
-
     handleColorMap: function (geometry, colorMap, colorRange, attributes, material) {
         var canvas, texture, uvs, i;
 
-        canvas = lut(colorMap, 1024);
+        canvas = createCanvasGradient(colorMap, 1024);
 
         texture = new THREE.CanvasTexture(canvas, THREE.UVMapping, THREE.ClampToEdgeWrapping,
             THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter);
@@ -212,5 +204,35 @@ module.exports = {
 
             geometry.addAttribute('uv', new THREE.BufferAttribute(uvs, 1));
         }
+    },
+
+    typedArrayToThree: function (creator) {
+        if (creator === Int16Array) {
+            return THREE.ShortType;
+        }
+
+        if (creator === Int32Array) {
+            return THREE.IntType;
+        }
+
+        if (creator === Float16Array) {
+            return THREE.HalfFloatType;
+        }
+
+        if (creator === Float32Array) {
+            return THREE.FloatType;
+        }
+    },
+
+    areAllChangesResolve: function (changes) {
+        return Object.keys(changes).every(function (key) {
+            return changes[key] === null;
+        });
+    },
+
+    recalculateFrustum: function (camera) {
+        camera.frustum.setFromMatrix(new THREE.Matrix4().multiplyMatrices(
+            camera.projectionMatrix, camera.matrixWorldInverse
+        ));
     }
 };

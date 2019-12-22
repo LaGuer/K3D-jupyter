@@ -2,10 +2,11 @@
 Utilities module.
 """
 
-import os
-import numpy as np
 import itertools
+import numpy as np
+import os
 import zlib
+
 
 # import logging
 #
@@ -19,7 +20,7 @@ import zlib
 
 # pylint: disable=unused-argument
 # noinspection PyUnusedLocal
-def array_to_binary(ar, obj=None, force_contiguous=True):
+def array_to_binary(ar, compression_level=0, force_contiguous=True):
     """Pre-process numpy array for serialization in traittypes.Array."""
     if ar.dtype.kind not in ['u', 'i', 'f']:  # ints and floats
         raise ValueError("unsupported dtype: %s" % ar.dtype)
@@ -32,8 +33,8 @@ def array_to_binary(ar, obj=None, force_contiguous=True):
     if force_contiguous and not ar.flags["C_CONTIGUOUS"]:  # make sure it's contiguous
         ar = np.ascontiguousarray(ar)
 
-    if obj.compression_level > 0:
-        return {'compressed_buffer': zlib.compress(memoryview(ar), obj.compression_level), 'dtype': str(ar.dtype),
+    if compression_level > 0:
+        return {'compressed_buffer': zlib.compress(ar, compression_level), 'dtype': str(ar.dtype),
                 'shape': ar.shape}
     else:
         return {'buffer': memoryview(ar), 'dtype': str(ar.dtype), 'shape': ar.shape}
@@ -43,21 +44,30 @@ def array_to_binary(ar, obj=None, force_contiguous=True):
 def from_json_to_array(value, obj=None):
     """Post-process traittypes.Array after deserialization to numpy array."""
     if value:
-        return np.frombuffer(value['buffer'], dtype=value['dtype']).reshape(value['shape'])
+        if 'buffer' in value:
+            return np.frombuffer(value['buffer'], dtype=value['dtype']).reshape(value['shape'])
+        else:
+            return np.frombuffer(zlib.decompress(value['compressed_buffer']),
+                                 dtype=value['dtype']).reshape(value['shape'])
     return None
 
 
-def to_json(input, obj=None, force_contiguous=True):
+def to_json(name, input, obj=None, compression_level=0):
+    property = obj[name]
+
+    if hasattr(obj, 'compression_level'):
+        compression_level = obj.compression_level
+
     if isinstance(input, dict):
         ret = {}
         for key, value in input.items():
-            ret[key] = to_json(value, obj, force_contiguous)
+            ret[key] = to_json(key, value, property, compression_level)
 
         return ret
     elif isinstance(input, list):
-        return [to_json(i, obj) for i in input]
+        return [to_json(idx, v, property, compression_level) for idx, v in enumerate(input)]
     elif isinstance(input, np.ndarray):
-        return array_to_binary(input, obj, force_contiguous)
+        return array_to_binary(input, compression_level)
     else:
         return input
 
@@ -65,7 +75,8 @@ def to_json(input, obj=None, force_contiguous=True):
 def from_json(input, obj=None):
     # logger.info('from_json:' + pformat(input))
 
-    if isinstance(input, dict) and 'dtype' in input and 'buffer' in input and 'shape' in input:
+    if isinstance(input, dict) and 'dtype' in input and ('buffer' in input or 'compressed_buffer' in input) \
+            and 'shape' in input:
         return from_json_to_array(input, obj)
     elif isinstance(input, list):
         return [from_json(i, obj) for i in input]
@@ -79,7 +90,11 @@ def from_json(input, obj=None):
         return input
 
 
-array_serialization = dict(to_json=to_json, from_json=from_json)
+def array_serialization_wrap(name):
+    return {
+        'to_json': (lambda input, obj: to_json(name, input, obj)),
+        'from_json': from_json,
+    }
 
 
 def download(url):
@@ -118,7 +133,7 @@ def check_attribute_range(attribute, color_range=()):
     If the attribute is empty or color_range has 2 elements, returns color_range unchanged.
     Computes color range as [min(attribute), max(attribute)].
     When min(attribute) == max(attribute) returns [min(attribute), min(attribute)+1]."""
-    if attribute.size == 0 or len(color_range) == 2:
+    if type(attribute) is dict or attribute.size == 0 or len(color_range) == 2:
         return color_range
     color_range = minmax(attribute)
     if color_range[0] == color_range[1]:
@@ -145,3 +160,29 @@ def bounding_corners(bounds, z_bounds=(0., 1)):
 def min_bounding_dimension(bounds):
     """Return a minimal dimension along axis in a bounds ([min_x, max_x, min_y, max_y, min_z, max_z]) array."""
     return min(abs(x1 - x0) for x0, x1 in zip(bounds, bounds[1:]))
+
+
+def shape_validation(*dimensions):
+    """Create a validator callback (for Array traittype) ensuring shape."""
+    from traitlets import TraitError
+
+    def validator(trait, value):
+        if np.shape(value) != dimensions:
+            raise TraitError('Expected an array of shape %s and got %s' % (dimensions, value.shape))
+
+        return value
+
+    return validator
+
+
+def validate_sparse_voxels(trait, value):
+    """Check sparse voxels for array shape and values."""
+    from traitlets import TraitError
+
+    if len(value.shape) != 2 or value.shape[1] != 4:
+        raise TraitError('Expected an array of shape (N, 4) and got %s' % (value.shape,))
+
+    if (value.astype(np.int16) < 0).any():
+        raise TraitError('Voxel coordinates and values must be non-negative')
+
+    return value

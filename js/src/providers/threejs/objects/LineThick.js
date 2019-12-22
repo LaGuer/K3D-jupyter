@@ -1,10 +1,11 @@
 'use strict';
 
-var colorsToFloat32Array = require('./../../../core/lib/helpers/buffer').colorsToFloat32Array,
-//    diff = require('./../../../core/lib/helpers/diff').diff,
-    MeshLine = require('./../helpers/THREE.MeshLine'),
+var THREE = require('three'),
+    colorsToFloat32Array = require('./../../../core/lib/helpers/buffer').colorsToFloat32Array,
+    MeshLine = require('./../helpers/THREE.MeshLine')(THREE),
     Fn = require('./../helpers/Fn'),
-    lut = require('./../../../core/lib/helpers/lut'),
+    areAllChangesResolve = Fn.areAllChangesResolve,
+    colorMapHelper = require('./../../../core/lib/helpers/colorMap'),
     getColorsArray = Fn.getColorsArray;
 
 /**
@@ -39,7 +40,7 @@ function create(config, K3D) {
         position = config.vertices.data;
 
     if (attribute && colorRange && colorMap && attribute.length > 0 && colorRange.length > 0 && colorMap.length > 0) {
-        var canvas = lut(colorMap, 1024);
+        var canvas = colorMapHelper.createCanvasGradient(colorMap, 1024);
         var texture = new THREE.CanvasTexture(canvas, THREE.UVMapping, THREE.ClampToEdgeWrapping,
             THREE.ClampToEdgeWrapping, THREE.NearestFilter, THREE.NearestFilter);
         texture.needsUpdate = true;
@@ -65,6 +66,9 @@ function create(config, K3D) {
     line.geometry.computeBoundingBox();
 
     object = new THREE.Mesh(line.geometry, material);
+    object.userData.meshLine = line;
+    object.userData.lastPosition = new Float32Array(position);
+
     modelMatrix.set.apply(modelMatrix, config.model_matrix.data);
     object.applyMatrix(modelMatrix);
 
@@ -87,22 +91,46 @@ function create(config, K3D) {
     return Promise.resolve(object);
 }
 
-// function update(config, prevConfig, obj, K3D) {
-//     var toUpdated = diff(config, prevConfig);
-//
-//     if (toUpdated['vertices'] && toUpdated['attribute']) {
-//         var newLine = create(config, K3D);
-//
-//         // obj.geometry.dispose();
-//         obj.geometry = newLine.geometry;
-//
-//         return Promise.resolve(obj);
-//     }
-//
-//     return false;
-// }
+
+function update(config, changes, obj) {
+    var uvs = null, position = obj.userData.lastPosition;
+
+    if (typeof(changes.attribute) !== 'undefined' && !changes.attribute.timeSeries) {
+        if (changes.attribute.data.length !== obj.geometry.attributes.uv.array.length) {
+            return false;
+        }
+
+        uvs = new Float32Array(changes.attribute.data.length);
+
+        for (var i = 0; i < uvs.length; i++) {
+            uvs[i] = (changes.attribute.data[i] - config.color_range[0]) /
+                     (config.color_range[1] - config.color_range[0]);
+        }
+    }
+
+    if (typeof(changes.vertices) !== 'undefined' && !changes.vertices.timeSeries) {
+        if (changes.vertices.data.length !== position.length) {
+            return false;
+        }
+
+        position = changes.vertices.data;
+    }
+
+    if (typeof(changes.attribute) !== 'undefined' || typeof(changes.vertices) !== 'undefined') {
+        obj.userData.meshLine.setGeometry(position, false, null, null, uvs);
+
+        changes.attribute = null;
+        changes.vertices = null;
+    }
+
+    if (areAllChangesResolve(changes)) {
+        return Promise.resolve({json: config, obj: obj});
+    } else {
+        return false;
+    }
+}
 
 module.exports = {
-    create: create
-    // update: update
+    create: create,
+    update: update
 };
